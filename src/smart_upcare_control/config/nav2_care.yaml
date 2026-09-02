@@ -1,0 +1,414 @@
+### nav2_care.yaml — 케어 시설 복도용 Nav2 파라미터 (시뮬/실물 공용)
+###
+###   시뮬/실물 분기는 launch의 use_sim_time 으로만. 이 파일은 공용.
+###   SLAM↔AMCL 분기: navigation.launch.py 의 slam:=true/false
+###     - slam:=true  → slam_toolbox 가 map 제공, amcl 미기동
+###     - slam:=false → map_server + amcl (아래 amcl 블록 사용)
+###
+### ★ 8/29 반영 — footprint 실물 축소치수로 통일
+###   데모 로봇은 가변폭 리프트가 미동작 상태로 축소 고정이므로, local/global
+###   footprint 를 실물 축소 280×378mm(반치수 0.189/0.140)로 통일했다.
+###   기존 local 은 시뮬 임시축소값(0.34×0.30), global 은 실물 펼침값
+###   (0.499×0.451, 반치수 0.2495/0.2255)이라 서로 다른 로봇 크기를 쓰고 있었고
+###   둘 다 실측과 무관했다. inflation_radius 도 0.34(펼침 외접원 336mm 기준)
+###   에서 0.24(접힘 외접원 235mm 기준)로 함께 낮췄다.
+###   ⚠️ 이 반치수(0.189×0.140)는 08/29 문서의 확정값이며 프린트물 실측치는
+###     아직 아니다(껍데기 중심↔바퀴 중심 offset 미실측, §조립중_실측_체크리스트).
+###     실측되면 이 값과 offset을 함께 갱신할 것.
+### 로봇: 메카넘 홀로노믹.
+### 속도: max 0.3 m/s (케어시설 안전). MPPI Omni 모델로 vy(횡이동) 허용.
+### ⚠️ 위 축소치수 외 나머지 튜닝값(alpha, MPPI 등)은 시뮬 검증값. bag 기반 실물 튜닝(§2-3) 후 갱신.
+
+### ★ 8/4 추가 — use_sim_time 주입 지점
+###
+###   [원인] nav2_bringup 은 RewrittenYaml 로 use_sim_time 값을 주입하는데,
+###   이는 "파일에 이미 있는 키의 값만" 교체한다. 키가 없으면 추가하지 않는다.
+###   기존 nav2_care.yaml 에는 use_sim_time 이 한 줄도 없어서
+###   launch 에 use_sim_time:=true 를 줘도 전부 무시되고 각 노드가 벽시계를 썼다.
+###
+###   [증상] controller_server 로그
+###     "Transform data too old when converting from map to odom"
+###     "Data time: 1785821239s / Transform time: 145s"   <- 에포크 vs 시뮬시간
+###   변환 실패 -> 거리 계산 불가 -> 즉시 "Reached the goal!" -> 로봇 정지
+###   AMCL 스캔 폐기, global_costmap "map frame does not exist" 도 모두 같은 원인.
+###
+###   [수정] 아래 /** 와일드카드 + 각 노드 블록에 use_sim_time 키를 명시.
+###   값은 False 로 두되 RewrittenYaml 이 launch 인자로 덮어쓰므로
+###   시뮬/실물 공용 원칙은 그대로 유지된다.
+/**:
+  ros__parameters:
+    use_sim_time: False
+
+amcl:
+  ros__parameters:
+    use_sim_time: False   # ★ RewrittenYaml 이 launch 값으로 덮어씀
+    # ★ 8/4 — 오도메트리 신뢰도 상향 (0.2 -> 0.05)
+    #
+    #   [증상] 복도 중간 알코브(x 3.6~4.4) 근처에서 매번 로봇이 방향을 크게 틀고
+    #         경로를 이탈, 결국 goal abort.
+    #
+    #   [원인] 8 m 균질 복도에서는 X 방향 위치 모호성 때문에 AMCL 파티클이
+    #         복도를 따라 퍼진다. 알코브라는 강한 특징을 만나는 순간 추정 위치가
+    #         '스냅'하듯 크게 보정되고, 그 불연속이 map->odom 점프로 나타나
+    #         컨트롤러 입장에서는 경로가 갑자기 어긋난 것처럼 보인다.
+    #
+    #   [근거] alpha1~5 는 오도메트리 노이즈 모델. 0.2 는 실제 바퀴 미끄러짐을
+    #         가정한 값인데, 시뮬(planar_move + EKF)은 슬립이 없어 오도메트리가
+    #         거의 정확하다. 과소평가된 신뢰도가 파티클 확산과 스냅을 키운다.
+    #
+    #   ⚠️ 실기체 전환 시에는 되돌릴 것. 메카넘은 슬립이 크므로 0.15~0.25 권장.
+    # ★ 8/6 되돌림 (0.05 -> 0.2) — 위 8/4 주석의 전제가 실측으로 깨졌다.
+    #
+    #   [8/4 의 근거] "시뮬(planar_move + EKF)은 슬립이 없어 오도메트리가
+    #     거의 정확하므로 신뢰도를 올려도 된다."
+    #
+    #   [8/6 실측] 그 전제가 틀렸다.
+    #       gz model (실제)          world x = 7.59
+    #       /odom_raw (planar_move)  x = 7.575   -> 정확
+    #       /odometry/filtered (EKF) x = 9.74    -> 기대 8.19, 오차 +1.55 m
+    #
+    #   [원인] gazebo_ros_planar_move 는 '위치'는 월드 좌표에서 가져오지만
+    #     '속도'는 명령값을 그대로 되돌려준다. 로봇이 벽·코스트맵에 막혀
+    #     못 움직이는 동안에도 "0.3 m/s 로 주행 중"이라고 보고한다.
+    #     EKF 는 위치를 안 쓰고 속도만 적분하므로(odom0_config 참조)
+    #     정체 시간이 전부 '유령 이동' 거리로 누적된다.
+    #
+    #   [결과] 오도메트리를 과신하게 만들어 놓아 AMCL 이 스캔 정합으로
+    #     보정할 여지가 없어졌다. 8/6 주행에서 목표를 1.0~1.8 m 못 미친 채
+    #     "Reached the goal!" 로 오판정.
+    #
+    #   ⚠️ 이 값은 시뮬·실물 모두 0.15~0.25 가 맞다. 실물 메카넘은 슬립이,
+    #     시뮬은 유령 이동이 있어 '오도메트리를 못 믿는다'는 결론은 같다.
+    #     낮추고 싶다면 반드시 EKF 출력 대 ground truth 를 먼저 실측할 것.
+    alpha1: 0.2
+    alpha2: 0.2
+    alpha3: 0.2
+    alpha4: 0.2
+    alpha5: 0.2
+    base_frame_id: "base_footprint"
+    global_frame_id: "map"
+    odom_frame_id: "odom"
+    scan_topic: scan
+    robot_model_type: "nav2_amcl::OmniMotionModel"   # 홀로노믹
+    laser_model_type: "likelihood_field"
+    max_particles: 2000
+    min_particles: 500
+    laser_max_range: 12.0        # A2M12
+    laser_min_range: 0.2
+    # ★ 8/4 오후 — 되돌림 (120/0.15/0.15 -> 60/0.2/0.25)
+    #
+    #   [경위] 오전에 "빨간 스캔이 지도와 어긋난다"를 위치추정 정밀도 부족으로
+    #         보고 max_beams 2배 + 갱신 주기 단축을 넣었다. 결과는 악화.
+    #
+    #   [실측] RTF 0.59, load average 24.4 (4코어 VM).
+    #         component_container 88% / rviz2 71% / gnome-shell 47% /
+    #         gzserver 29% / Xorg 18%.
+    #         → 병목은 위치추정 정밀도가 아니라 CPU 포화였다.
+    #         빔 2배(정합 비용 x2) x 갱신 1.67배 = AMCL 약 3.3배 가중.
+    #         MPPI 감량으로 아낀 분을 AMCL 이 도로 먹었다.
+    #
+    #   [교훈] 어긋난 빨간 스캔은 위치추정 오차가 아니라 RViz 가 메시지를
+    #         드롭하고 마지막 성공 프레임을 계속 그린 것이었다
+    #         ("Message Filter dropping message ... timestamp is earlier
+    #          than all the data in the transform cache").
+    #         CPU 가 포화된 상태에서는 화면상의 증상으로 원인을 판단할 수 없다.
+    #         부하부터 확인하고, 변경은 한 번에 하나씩.
+    max_beams: 60
+    update_min_a: 0.2        # rad
+    update_min_d: 0.25       # m
+    tf_broadcast: true
+    transform_tolerance: 1.0
+
+    # ★ 8/3 추가 — 시작 시 초기 위치 자동 설정
+    #   이게 없으면 AMCL 은 /initialpose 를 받기 전까지 map->odom TF 를 발행하지 않는다.
+    #   그런데 global_costmap 은 configure 단계에서 map->base_footprint 를 필요로 하므로
+    #     costmap 은 map 프레임을 기다리고 / AMCL 은 초기 위치를 기다리는 교착
+    #   이 생겨 lifecycle 이 ACTIVE 까지 못 간다.
+    #   → 로봇 스폰 위치(월드 -0.60, 0.00)에 대응하는 map 좌표를 미리 넣어둔다.
+    #     map = 월드 + (0.58, -0.01)  [8/3 실측: gz model vs tf2_echo]
+    #   스폰 좌표를 바꾸면 이 값도 같이 바꿀 것.
+    set_initial_pose: true
+    always_reset_initial_pose: false
+    initial_pose:
+      x: -0.04
+      y: 0.04
+      z: 0.0
+      yaw: 0.0
+
+bt_navigator:
+  ros__parameters:
+    use_sim_time: False   # ★ RewrittenYaml 이 launch 값으로 덮어씀
+    global_frame: map
+    robot_base_frame: base_footprint
+    odom_topic: /odometry/filtered     # EKF 출력
+    # ★ 8/3 제거 — default_nav_to_pose_bt_xml: ""
+    #   "기본 BT 사용" 의도로 빈 문자열을 넣었으나, Nav2 는 이를
+    #   "빈 파일 경로" 로 해석해 loadBehaviorTree("") 에서 실패한다.
+    #   → on_configure 실패 → bt_navigator 가 ACTIVE 가 되지 못하고
+    #     /goal_pose 구독조차 생성되지 않는다("Waiting for at least 1 matching subscription").
+    #   기본 BT 를 쓰려면 이 파라미터를 아예 지정하지 않아야 한다.
+    transform_tolerance: 0.5
+
+controller_server:
+  ros__parameters:
+    use_sim_time: False   # ★ RewrittenYaml 이 launch 값으로 덮어씀
+    # ★ 8/4 되돌림: 20.0 -> 10.0 으로 낮췄더니 controller_server 가
+    #   configure 에서 실패해 Nav2 전체 bringup 이 중단됐다.
+    #   MPPI 의 model_dt(0.05) 는 제어 주기(1/20 = 0.05)와 짝을 이루는 값이라
+    #   controller_frequency 만 바꾸면 정합이 깨진다.
+    #   나중에 낮추려면 반드시 함께 바꿀 것:  10.0 <-> model_dt 0.1
+    #   'Control loop missed' 경고는 뜨지만 주행 자체는 정상 동작 확인됨(2.26m 주행).
+    controller_frequency: 20.0
+    min_x_velocity_threshold: 0.001
+    min_y_velocity_threshold: 0.001
+    min_theta_velocity_threshold: 0.001
+    progress_checker_plugins: ["progress_checker"]
+    goal_checker_plugins: ["goal_checker"]
+    controller_plugins: ["FollowPath"]
+
+    progress_checker:
+      plugin: "nav2_controller::SimpleProgressChecker"
+      required_movement_radius: 0.5
+      movement_time_allowance: 30.0   # ★ 8/4 감속 구간에서 조기 중단 방지
+    goal_checker:
+      plugin: "nav2_controller::SimpleGoalChecker"
+      xy_goal_tolerance: 0.15
+      yaw_goal_tolerance: 0.15
+      stateful: True
+
+    # MPPI, Omni 모델 (메카넘 홀로노믹). 후진 차단: vx_min = 0.0
+    FollowPath:
+      plugin: "nav2_mppi_controller::MPPIController"
+      # ★ 8/4 VM 부하 경감
+      #   [증상] "Control loop missed its desired rate of 20.0000Hz",
+      #         "[ekf_node] Failed to meet update rate!", 간헐적 goal abort(status 6)
+      #   [원인] MPPI 는 매 제어주기마다 batch_size 개의 가상 경로를 time_steps 만큼
+      #         전방 시뮬레이션한다. 1500 x 40 x 20Hz = 초당 120만 스텝. 4코어 VM 에 과부하.
+      #   [수정] 600 x 25 x 20Hz = 초당 30만 스텝 (4배 경감)
+      #   0.3 m/s 저속 주행에는 이 해상도로 충분하다.
+      #   예측 지평 25 x 0.05 = 1.25초 (기존 2.0초) — 저속이라 여유 있음.
+      #   ⚠️ model_dt 는 controller_frequency(20Hz)의 역수와 짝. 함께 바꿀 것.
+      time_steps: 25
+      model_dt: 0.05
+      batch_size: 600
+      vx_std: 0.15
+      # ★ 8/6 — vy 축소 (0.3 -> 0.1, std 0.15 -> 0.05)
+      #   [경위] velocity_smoother 의 y 클램프를 푼 직후, 로봇이 복도를
+      #     '게걸음'으로 주행했다. MPPI 는 몸을 돌리는 것보다 횡이동이
+      #     비용이 싸다고 판단하므로, 허용하면 최대한 쓴다.
+      #   [문제] (1) 영상에서 자율주행이 아니라 미끄러지는 것처럼 보인다.
+      #          (2) 운영 시나리오(전진 진입 -> 정지 -> 리프트 -> 제자리
+      #              180deg 회전 -> 전진 퇴출)와 어긋난다.
+      #          (3) 실물 메카넘은 횡이동 시 슬립·전류 소모가 커서
+      #              상시 주행 방식으로 부적절하다.
+      #   [해법] 0 으로 막으면 8/4~8/5 의 정지 문제가 재발한다(그게 원인이었다).
+      #     '이동 수단'이 아니라 '미세 정렬 수단' 수준으로만 남긴다.
+      #     vx 0.3 대비 1/3 -> 진행 방향 정렬을 회전이 담당하게 된다.
+      #   ⚠️ velocity_smoother 의 max_velocity y 는 0.3 으로 유지할 것.
+      #     그쪽을 같이 조이면 또 하류 은닉 클램프가 된다. 상한은 넉넉히 두고
+      #     컨트롤러가 결정하게 한다.
+      vy_std: 0.05
+      wz_std: 0.3
+      vx_max: 0.3
+      vx_min: 0.0            # 전진만 (계획 단계 후진 차단)
+      vy_max: 0.1            # 미세 정렬용 (0.3 -> 0.1)
+      wz_max: 1.0
+      motion_model: "Omni"
+      visualize: false
+      TrajectoryVisualizer:
+        trajectory_step: 5
+        time_step: 3
+      critics: ["ConstraintCritic", "GoalCritic", "GoalAngleCritic",
+                "PreferForwardCritic", "ObstaclesCritic", "PathAlignCritic",
+                "PathFollowCritic", "PathAngleCritic"]
+      ConstraintCritic:
+        cost_weight: 4.0
+      GoalCritic:
+        cost_weight: 5.0
+        threshold_to_consider: 0.5
+      ObstaclesCritic:
+        cost_weight: 8.0
+        repulsion_weight: 1.5
+        critical_weight: 20.0
+        collision_cost: 10000.0
+        near_goal_distance: 0.3
+
+# ─────────────────────────────────────────────────────────────────────
+# ★ 8/5 신규 — velocity_smoother (이 섹션이 없어서 기본값으로 돌고 있었다)
+#
+#   [발견 경위] 8/4 복도 주행이 world x≈7.1 에서 3회 연속 정지.
+#     Collision Monitor / AMCL / footprint / MPPI 부하를 차례로 의심했으나 전부 기각.
+#     토픽 체인을 실제로 조회해보고서야 구조를 알았다:
+#
+#       controller_server -> /cmd_vel_nav -> velocity_smoother -> /cmd_vel
+#         -> collision_monitor -> /cmd_vel_smoothed -> planar_move
+#
+#     nav2_bringup/navigation_launch.py 가 controller_server 의 cmd_vel 을
+#     cmd_vel_nav 로 리매핑하고 그 사이에 velocity_smoother 를 끼워 넣는다.
+#     즉 velocity_smoother 는 명령 경로 한가운데 있는데, 이 파일에 섹션이
+#     없어 **기본값(차동구동 기준)** 으로 동작하고 있었다.
+#
+#   [실측 8/5]  ros2 param get /velocity_smoother max_velocity
+#                 -> array('d', [0.5, 0.0, 2.5])
+#     y 성분이 0.0 이다. 즉 **메카넘 횡이동(strafe)이 전량 0 으로 클램프**된다.
+#     MPPI 에 vy_max: 0.3 을 줘도 하류에서 잘려 로봇에 도달하지 않는다.
+#     좁은 복도에서 횡방향 보정을 못 하면 정렬을 회전으로만 해결해야 하고,
+#     이것이 8/4 에 관측된 과도한 제자리 회전·진동·정지와 일치한다.
+#
+#   ⚠️ max_velocity 만 열면 안 된다. max_accel / max_decel 의 y 기본값도
+#     0.0 이라 가속을 못 해 여전히 움직이지 않는다. 반드시 함께 푼다.
+#
+#   [교훈] 토픽 이름이 같다고 같은 지점이 아니다. 신호를 재기 전에 먼저
+#     '어느 노드가 어느 토픽에 발행하는지' 를 조회할 것.
+#         ros2 topic info <topic> --verbose
+#     8/4 에 /cmd_vel 을 재고 "컨트롤러가 명령을 안 낸다" 고 결론냈으나,
+#     실제로는 velocity_smoother 출력을 잰 것이어서 그 결론은 무효였다.
+# ─────────────────────────────────────────────────────────────────────
+velocity_smoother:
+  ros__parameters:
+    use_sim_time: False   # ★ RewrittenYaml 이 launch 값으로 덮어씀
+    smoothing_frequency: 20.0
+    scale_velocities: False
+    feedback: "OPEN_LOOP"       # CLOSED_LOOP 는 odom 품질 의존 + VM 부하 증가
+    # [vx, vy, wz] — MPPI 의 vx_max/vy_max/wz_max 와 동일하게 맞춘다
+    max_velocity: [0.3, 0.3, 1.0]
+    # vx 하한 0.0 은 '후진 안 함' 설계 의도(MPPI vx_min: 0.0)와 맞춘 것.
+    # 숨은 클램프가 되지 않도록 여기 명시해 둔다.
+    # (복구 동작 backup 은 behavior_server 가 /cmd_vel 에 직접 발행하므로
+    #  이 노드를 거치지 않는다 — 8/5 토픽 조회로 확인)
+    min_velocity: [0.0, -0.3, -1.0]
+    max_accel: [2.5, 2.5, 3.2]      # y 기본값 0.0 -> 2.5
+    max_decel: [-2.5, -2.5, -3.2]   # y 기본값 0.0 -> -2.5
+    odom_topic: "odometry/filtered" # EKF 출력 (feedback OPEN_LOOP 시 미사용)
+    odom_duration: 0.1
+    deadband_velocity: [0.0, 0.0, 0.0]
+    velocity_timeout: 1.0
+
+local_costmap:
+  local_costmap:
+    ros__parameters:
+      use_sim_time: False   # ★ RewrittenYaml 이 launch 값으로 덮어씀
+      update_frequency: 5.0
+      publish_frequency: 2.0
+      global_frame: odom
+      robot_base_frame: base_footprint
+      rolling_window: true
+      width: 4
+      height: 4
+      resolution: 0.05
+      # ★ 8/3 추가 — 기본값 0.3초는 VM(스캔 5Hz=0.2초 주기 + 지연)에서 부족.
+      #   "timestamp on the message is earlier than all the data in the transform cache"
+      #   로 스캔이 전부 버려진다.
+      transform_tolerance: 1.0
+      # ★ 8/4 저녁 — 시뮬 URDF 실측 치수로 교체 (0.499x0.451 -> 0.34x0.30)
+      #
+      #   [문제] 기존 0.499 x 0.451 은 '앞으로 만들 실물 섀시(394x492mm) 펼침 상태'
+      #         기준값이다. 그런데 지금 Gazebo 안의 URDF 는 그 크기가 아니다.
+      #
+      #   [URDF 실측 — smart_upcare.urdf.xacro]
+      #         섀시            0.20 x 0.20
+      #         트랙폭 0.20699 + 바퀴폭 0.048   -> 전체 폭   0.255
+      #         휠베이스 0.19205 + 바퀴지름 0.0803 -> 0.272
+      #         리프트 플랫폼   0.299 x 0.186      -> 전체 길이 0.299 (지배적)
+      #         ⇒ 실제 외형 0.299 x 0.255,  반치수 0.1495 / 0.1275
+      #         ⇒ 여유 2cm 부여해 0.34 x 0.30 (반치수 0.17 / 0.15) 사용
+      #
+      #   [영향] 내접원이 footprint 최소 반치수로 정해지고, Nav2 는 벽에서
+      #         내접원 거리 안쪽을 '무조건 충돌(cost 253)'로 칠한다.
+      #         복도 반폭 0.60 기준 제자리 회전 가능 조건은
+      #             외접원 + |y_중앙이탈| < 0.60 - 내접원
+      #         기존: 0.336 + |y| < 0.3745  ->  |y| < 0.038  (±3.8cm)
+      #         수정: 0.227 + |y| < 0.45    ->  |y| < 0.223  (±22cm)
+      #
+      #   [증상 설명] 8/4 로그의
+      #         "[behavior_server]: Collision Ahead - Exiting Spin"
+      #         은 실제 충돌이 아니라 과대 footprint 때문에 코스트맵상 회전이
+      #         막힌 것. 중앙에서 4cm만 벗어나도 회전 불가 -> 복구 동작 전부 실패
+      #         -> "Failed to make progress" -> Goal failed.
+      #         AMCL 오차 수 cm 가 성패를 가르는 구조였다 (= 확률적 실패의 정체).
+      #
+      #   ⚠️ 실물 섀시 완성 시 반드시 되돌릴 것. 실물 펼침 394x492mm 에서는
+      #     복도 1.2m 가 실제로 회전 불가이며, 그것이 가변폭 기구의 존재 이유다.
+      #     (축소 280x378mm 상태에서 회전 -> 이 시나리오를 Nav2 footprint
+      #      동적 변경으로 구현해야 함. §운영 시나리오 참조)
+      footprint: "[[0.189, 0.140], [0.189, -0.140], [-0.189, -0.140], [-0.189, 0.140]]"
+      plugins: ["obstacle_layer", "inflation_layer"]
+      obstacle_layer:
+        plugin: "nav2_costmap_2d::ObstacleLayer"
+        enabled: True
+        observation_sources: scan
+        scan:
+          topic: /scan
+          max_obstacle_height: 2.0
+          clearing: True
+          marking: True
+          data_type: "LaserScan"
+          raytrace_max_range: 12.0
+          obstacle_max_range: 10.0
+      inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        cost_scaling_factor: 3.0
+        inflation_radius: 0.24       # ★ 8/29 실물 축소치수 반영. 외접원 235mm 기준 (기존 336mm는 시뮬/펼침 기준)
+
+global_costmap:
+  global_costmap:
+    ros__parameters:
+      use_sim_time: False   # ★ RewrittenYaml 이 launch 값으로 덮어씀
+      update_frequency: 1.0
+      publish_frequency: 1.0
+      global_frame: map
+      robot_base_frame: base_footprint
+      resolution: 0.05
+      transform_tolerance: 1.0     # ★ 8/3 추가 (local_costmap 과 동일 사유)
+      track_unknown_space: true
+      footprint: "[[0.189, 0.140], [0.189, -0.140], [-0.189, -0.140], [-0.189, 0.140]]"
+      plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
+      static_layer:
+        plugin: "nav2_costmap_2d::StaticLayer"
+        map_subscribe_transient_local: True
+      obstacle_layer:
+        plugin: "nav2_costmap_2d::ObstacleLayer"
+        enabled: True
+        observation_sources: scan
+        scan:
+          topic: /scan
+          max_obstacle_height: 2.0
+          clearing: True
+          marking: True
+          data_type: "LaserScan"
+          raytrace_max_range: 12.0
+          obstacle_max_range: 10.0
+      inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        cost_scaling_factor: 3.0
+        inflation_radius: 0.24        # ★ 8/29 실물 축소치수 반영. 외접원 235mm 기준
+
+planner_server:
+  ros__parameters:
+    use_sim_time: False   # ★ RewrittenYaml 이 launch 값으로 덮어씀
+    expected_planner_frequency: 1.0
+    planner_plugins: ["GridBased"]
+    GridBased:
+      plugin: "nav2_navfn_planner/NavfnPlanner"
+      tolerance: 0.5
+      use_astar: false
+      allow_unknown: true
+
+behavior_server:
+  ros__parameters:
+    use_sim_time: False   # ★ RewrittenYaml 이 launch 값으로 덮어씀
+    local_frame: odom
+    global_frame: map
+    robot_base_frame: base_footprint
+    behavior_plugins: ["spin", "backup", "wait"]
+    spin:
+      plugin: "nav2_behaviors/Spin"
+    backup:
+      plugin: "nav2_behaviors/BackUp"
+    wait:
+      plugin: "nav2_behaviors/Wait"
+
+map_server:
+  ros__parameters:
+    use_sim_time: False   # ★ RewrittenYaml 이 launch 값으로 덮어씀
+    yaml_filename: ""    # launch에서 map 경로 주입 (실물: 복도맵, 시뮬: care_map.yaml)

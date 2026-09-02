@@ -1,0 +1,106 @@
+<?xml version="1.0" ?>
+<sdf version="1.6">
+  <world name="care_facility">
+
+    <include><uri>model://ground_plane</uri></include>
+    <include><uri>model://sun</uri></include>
+
+    <!-- ============ 복도 (길이 8m, 폭 1.2m) ============ -->
+    <!-- 좌측 벽 -->
+    <model name="wall_L">
+      <static>true</static>
+      <pose>0 0.6 0.5 0 0 0</pose>
+      <link name="link">
+        <collision name="c">
+          <geometry><box><size>8 0.1 1.0</size></box></geometry>
+        </collision>
+        <visual name="v">
+          <geometry><box><size>8 0.1 1.0</size></box></geometry>
+        </visual>
+      </link>
+    </model>
+
+    <!-- 우측 벽 -->
+    <model name="wall_R">
+      <static>true</static>
+      <pose>0 -0.6 0.5 0 0 0</pose>
+      <link name="link">
+        <collision name="c">
+          <geometry><box><size>8 0.1 1.0</size></box></geometry>
+        </collision>
+        <visual name="v">
+          <geometry><box><size>8 0.1 1.0</size></box></geometry>
+        </visual>
+      </link>
+    </model>
+
+    <!-- 복도 끝 막음 (양쪽) -->
+    <model name="wall_end_A">
+      <static>true</static>
+      <pose>4 0 0.5 0 0 0</pose>
+      <link name="link">
+        <collision name="c">
+          <geometry><box><size>0.1 1.3 1.0</size></box></geometry>
+        </collision>
+        <visual name="v">
+          <geometry><box><size>0.1 1.3 1.0</size></box></geometry>
+        </visual>
+      </link>
+    </model>
+
+    <model name="wall_end_B">
+      <static>true</static>
+      <pose>-4 0 0.5 0 0 0</pose>
+      <link name="link">
+        <collision name="c">
+          <geometry><box><size>0.1 1.3 1.0</size></box></geometry>
+        </collision>
+        <visual name="v">
+          <geometry><box><size>0.1 1.3 1.0</size></box></geometry>
+        </visual>
+      </link>
+    </model>
+
+    <!-- ============ 침상 3개 (복도 좌측에 배치) ============ -->
+    <!-- 침상은 복도 안쪽으로 살짝 들어와 장애물이 되도록 -->
+    <model name="bed_1">
+      <static>true</static>
+      <pose>-2.0 0.35 0.25 0 0 0</pose>
+      <link name="link">
+        <collision name="c">
+          <geometry><box><size>2.0 0.9 0.5</size></box></geometry>
+        </collision>
+        <visual name="v">
+          <geometry><box><size>2.0 0.9 0.5</size></box></geometry>
+        </visual>
+      </link>
+    </model>
+
+    <model name="bed_2">
+      <static>true</static>
+      <pose>0.5 0.35 0.25 0 0 0</pose>
+      <link name="link">
+        <collision name="c">
+          <geometry><box><size>2.0 0.9 0.5</size></box></geometry>
+        </collision>
+        <visual name="v">
+          <geometry><box><size>2.0 0.9 0.5</size></box></geometry>
+        </visual>
+      </link>
+    </model>
+
+    <model name="bed_3">
+      <static>true</static>
+      <pose>3.0 0.35 0.25 0 0 0</pose>
+      <link name="link">
+        <collision name="c">
+          <geometry><box><size>2.0 0.9 0.5</size></box></geometry>
+        </collision>
+        <visual name="v">
+          <geometry><box><size>2.0 0.9 0.5</size></box></geometry>
+        </visual>
+      </link>
+    </model>
+
+  </world>
+</sdf>
