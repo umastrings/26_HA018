@@ -24,7 +24,7 @@ class MecanumKinematics:
     def __init__(
         self,
         wheel_radius: float = 0.040145,  # 지름 80.29mm STEP 실측 (7/29). ★CAD 외경 — 하중 시 눌림 → 조립 후 직선 2m 보정
-        track_width: float = 0.1354,    # 좌우 바퀴 축 중심 간 거리 (STEP 실측 7/29). 기존 244.4는 바깥면 오측
+        track_width: float = 0.1354,     # 좌우 바퀴 축 중심 간 거리. 90도 회전 odom 재보정값 (CLAUDE.md 참조)
         wheelbase: float = 0.19205,      # 앞뒤 바퀴 축 중심 간 거리 (STEP 실측 7/29)
         wheel_sign=(1, 1, 1, 1),      # M1~M4 회전 부호 플립 (실물 검증 후 확정)
     ):

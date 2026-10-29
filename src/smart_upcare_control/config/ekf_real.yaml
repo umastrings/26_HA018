@@ -21,10 +21,10 @@
     world_frame: odom
 
     # 휠 오도메트리 (serial_bridge /odom_raw) — vx, vy 사용
-    # ★ 9/1 원복 — IMU(ESP32 #1) 장착 후 yaw/vyaw는 IMU가 전담(메카넘 슬립에
-    #   더 강함, 명세서 §3.3). odom0의 vyaw(index 11)를 다시 켜두면 IMU와
-    #   휠오도가 동시에 yaw를 줘서 EKF 융합이 충돌하므로 false로 되돌린다.
-    #   (8/29에는 IMU 미연결이라 임시로 true였음 — 그 근거는 사라짐)
+    # ★ 9/5 원복 — vyaw(index 11) true->false. IMU(ESP32 #1) 장착 완료.
+    #   8/29엔 IMU 미연결이라 휠오도메트리 각속도로 yaw를 임시 대체했으나,
+    #   이제 IMU가 붙었으니 yaw/vyaw는 imu0_config 쪽에 전담시킨다
+    #   (메카넘 슬립에 더 강함, 명세서 §3.3). 휠 쪽은 vx,vy만 유지.
     odom0: /odom_raw
     odom0_differential: false
     odom0_relative: false
@@ -38,7 +38,10 @@
     # IMU (BNO055, ESP32#1 → serial_bridge /imu/data) — yaw, yaw_rate만 사용
     imu0: /imu/data
     imu0_differential: false
-    imu0_relative: false
+    # ★ 10/4 — true: 기동 시 IMU yaw 를 0 으로 잡는다 (odom 시작 방향 = 로봇 정면).
+    #   BNO055 가 NDOF(지자기)면 yaw 가 자북 기준이라 odom 이 시작부터 돌아가 있었음.
+    #   펌웨어를 IMUPLUS 로 바꿨지만 이중 안전장치로 유지.
+    imu0_relative: true
     imu0_queue_size: 10
     imu0_remove_gravitational_acceleration: true
     imu0_config: [false, false, false,

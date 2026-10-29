@@ -1,0 +1,363 @@
+<?xml version="1.0"?>
+<robot name="smart_upcare" xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <!-- ============================================================ -->
+  <!--  0. 실측 오버라이드 인자 (xacro:arg)                          -->
+  <!--     조립 후 실측값은 여기로만 주입 → 파일 수정 없이 교체       -->
+  <!--     예) xacro smart_upcare.urdf.xacro track_width:=0.244      -->
+  <!--     ★ launch에서 이 값들을 EKF/IK config와 동일 소스로 주면    -->
+  <!--       URDF·footprint·기구학이 한 번에 정합됨                   -->
+  <!-- ============================================================ -->
+  <xacro:arg name="track_width"  default="0.20699"/> <!-- STEP 실측 7/29 (기존 0.250 오측) -->
+  <xacro:arg name="wheelbase"    default="0.19205"/> <!-- STEP 실측 7/29 -->
+  <xacro:arg name="lidar_x"      default="0.0"/>    <!-- 🔶 7/30 프린트 실측 대기 §1-3 (예상 0.161) -->
+  <xacro:arg name="lidar_y"      default="0.0"/>
+  <xacro:arg name="lidar_height" default="0.175"/>  <!-- 🔶 7/30 실측 대기 §1-2 (예상 0.1725) -->
+  <xacro:arg name="lidar_yaw"    default="0.6217"/> <!-- 35.62° 확정. ★ 실제 장착은 35.62°+90°×k (k=0~3). 0°는 후보 아님 §3 -->
+  <xacro:arg name="camera_x"     default="0.10"/>   <!-- 🔶 7/30 실측 대기 §1-3 -->
+  <xacro:arg name="camera_tilt"  default="0.349"/>  <!-- 하향 틸트 rad (20°, 범위 15~30° §1-3) -->
+
+  <!-- ============================================================ -->
+  <!--  0-B. 시뮬 전용 센서 부하 인자 (7/31 추가)                     -->
+  <!--     ★ 아래 인자는 §6 <gazebo> 블록에서만 쓰인다.               -->
+  <!--       <gazebo> 는 Gazebo 전용 태그이고 실물 robot_state_       -->
+  <!--       publisher 는 통째로 무시하므로, 이 값을 어떻게 바꾸든    -->
+  <!--       젯슨의 실제 A2M12 / D415 동작에는 영향이 없다.           -->
+  <!--       링크·조인트·TF 구조도 건드리지 않는다.                   -->
+  <!--                                                              -->
+  <!--     배경: VirtualBox(llvmpipe 소프트웨어 렌더링)에서 측정      -->
+  <!--       월드만            → 약 18 FPS                           -->
+  <!--       + 로봇/센서 전체  → 7 FPS, RTF 0.50                     -->
+  <!--       LiDAR(CPU 레이캐스팅)는 물리 스레드를, 뎁스 카메라       -->
+  <!--       (소프트웨어 렌더)는 렌더 스레드를 각각 잡아먹는다.       -->
+  <!--                                                              -->
+  <!--     원복/상향 방법:                                           -->
+  <!--       xacro ... lidar_samples:=1600 camera_enabled:=true      -->
+  <!--       (spawn.launch.py 의 동명 launch 인자로도 전달 가능)      -->
+  <!-- ============================================================ -->
+  <xacro:arg name="lidar_samples"  default="360"/>   <!-- 실물 A2M12 ~3200. 시뮬은 1도 간격이면 slam_toolbox 충분 -->
+  <xacro:arg name="lidar_rate"     default="10"/>    <!-- Hz -->
+  <xacro:arg name="camera_enabled" default="false"/> <!-- 시뮬 뎁스카메라 on/off. 연구트랙에서 필요할 때 true -->
+  <xacro:arg name="camera_width"   default="212"/>
+  <xacro:arg name="camera_height"  default="120"/>
+  <xacro:arg name="camera_rate"    default="3"/>     <!-- Hz. 0.3 m/s 주행에는 3Hz면 충분 -->
+  <xacro:arg name="imu_rate"       default="100"/>   <!-- Hz. 기존값 유지. CPU 부족 시 50으로 -->
+
+  <!-- ============================================================ -->
+  <!--  1. 값 모음 (property)                                        -->
+  <!-- ============================================================ -->
+
+  <!-- 섀시 (06번 문서) -->
+  <xacro:property name="chassis_length" value="0.20"/>   <!-- x, 전후 -->
+  <xacro:property name="chassis_width"  value="0.20"/>   <!-- y, 좌우 -->
+  <xacro:property name="chassis_height" value="0.06"/>   <!-- z, 두께 -->
+  <xacro:property name="chassis_mass"   value="3.0"/>    <!-- kg, 근사치 TODO §1-1 -->
+  <xacro:property name="ground_clearance" value="0.021"/>
+
+  <!-- 바퀴 (06번 문서) -->
+  <xacro:property name="wheel_radius" value="0.040145"/>  <!-- 지름 80.29mm STEP 실측 7/29 (CAD 외경, 조립 후 보정) -->
+  <xacro:property name="wheel_width"  value="0.048"/>
+  <xacro:property name="wheel_mass"   value="0.15"/>
+  <xacro:property name="track_width"  value="$(arg track_width)"/>
+  <xacro:property name="wheelbase"    value="$(arg wheelbase)"/>
+  <xacro:property name="wheel_x" value="${wheelbase/2}"/>
+  <xacro:property name="wheel_y" value="${track_width/2}"/>
+
+  <!-- 리프트 상판 (STL 측정값) -->
+  <xacro:property name="platform_x" value="0.299"/>
+  <xacro:property name="platform_y" value="0.186"/>
+  <xacro:property name="lift_min_height" value="0.092"/>  <!-- 접힘 높이 (prismatic 원점) -->
+  <xacro:property name="lift_stroke"     value="0.648"/>  <!-- 가동 스트로크 (0.092→0.740) -->
+
+  <!-- 센서 장착 위치 (base_link 기준) — 0번 arg에서 주입 -->
+  <xacro:property name="lidar_x" value="$(arg lidar_x)"/>
+  <xacro:property name="lidar_y" value="$(arg lidar_y)"/>
+  <!-- lidar arg는 지면(base_footprint) 기준 → base_link 기준으로 환산 -->
+  <xacro:property name="lidar_z" value="${$(arg lidar_height) - (ground_clearance + wheel_radius)}"/>
+  <xacro:property name="lidar_yaw" value="$(arg lidar_yaw)"/>
+  <xacro:property name="camera_x" value="$(arg camera_x)"/>
+  <xacro:property name="camera_tilt" value="$(arg camera_tilt)"/>
+
+  <!-- ============================================================ -->
+  <!--  2. 재료 색상 (시각용)                                        -->
+  <!-- ============================================================ -->
+  <material name="chassis_color"><color rgba="0.2 0.4 0.8 1.0"/></material>
+  <material name="wheel_color"><color rgba="0.1 0.1 0.1 1.0"/></material>
+  <material name="sensor_color"><color rgba="0.9 0.2 0.2 1.0"/></material>
+
+  <!-- ============================================================ -->
+  <!--  3. base_footprint → base_link                               -->
+  <!-- ============================================================ -->
+  <link name="base_footprint">
+    <inertial>
+      <mass value="0.001"/>
+      <inertia ixx="1e-6" iyy="1e-6" izz="1e-6" ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+  </link>
+
+  <joint name="base_joint" type="fixed">
+    <parent link="base_footprint"/>
+    <child link="base_link"/>
+    <origin xyz="0 0 ${ground_clearance + wheel_radius}" rpy="0 0 0"/>
+  </joint>
+
+  <link name="base_link">
+    <visual>
+      <geometry><box size="${chassis_length} ${chassis_width} ${chassis_height}"/></geometry>
+      <material name="chassis_color"/>
+    </visual>
+    <collision>
+      <geometry><box size="${chassis_length} ${chassis_width} ${chassis_height}"/></geometry>
+    </collision>
+    <inertial>
+      <mass value="${chassis_mass}"/>
+      <inertia
+        ixx="${(1/12)*chassis_mass*(chassis_width*chassis_width + chassis_height*chassis_height)}"
+        iyy="${(1/12)*chassis_mass*(chassis_length*chassis_length + chassis_height*chassis_height)}"
+        izz="${(1/12)*chassis_mass*(chassis_length*chassis_length + chassis_width*chassis_width)}"
+        ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+  </link>
+
+  <!-- ============================================================ -->
+  <!--  4. 바퀴 매크로                                               -->
+  <!--     planar_move가 실제 구동 담당 → 바퀴는 fixed(시각용)       -->
+  <!-- ============================================================ -->
+  <xacro:macro name="mecanum_wheel" params="name x_sign y_sign">
+    <link name="wheel_${name}_link">
+      <visual>
+        <origin xyz="0 0 0" rpy="1.5708 0 0"/>  <!-- 원통을 눕힘: 축이 Y(바퀴 회전축) -->
+        <geometry><cylinder radius="${wheel_radius}" length="${wheel_width}"/></geometry>
+        <material name="wheel_color"/>
+      </visual>
+      <!-- ★ 스폰 롤오버(~90° 롤) 가설 지점 §3.
+           planar_move는 base_footprint를 기구학적으로 움직이므로 바퀴 collision은
+           구동에 불필요. 실린더 모서리 접촉이 스폰 시 틸팅을 유발한다는 가설.
+           Gazebo에서 롤오버 재현되면 아래 실린더 collision을 주석 처리하고
+           sphere collision(모서리 접촉 없음)으로 교체해 확인할 것.  -->
+      <collision>
+        <origin xyz="0 0 0" rpy="1.5708 0 0"/>
+        <geometry><cylinder radius="${wheel_radius}" length="${wheel_width}"/></geometry>
+      </collision>
+      <!-- <collision><geometry><sphere radius="${wheel_radius}"/></geometry></collision> -->
+      <inertial>
+        <mass value="${wheel_mass}"/>
+        <inertia
+          ixx="${(1/12)*wheel_mass*(3*wheel_radius*wheel_radius + wheel_width*wheel_width)}"
+          iyy="${(1/12)*wheel_mass*(3*wheel_radius*wheel_radius + wheel_width*wheel_width)}"
+          izz="${(1/2)*wheel_mass*wheel_radius*wheel_radius}"
+          ixy="0" ixz="0" iyz="0"/>
+      </inertial>
+    </link>
+    <joint name="wheel_${name}_joint" type="fixed">
+      <parent link="base_link"/>
+      <child link="wheel_${name}_link"/>
+      <origin xyz="${x_sign*wheel_x} ${y_sign*wheel_y} ${-chassis_height/2}" rpy="0 0 0"/>
+    </joint>
+  </xacro:macro>
+
+  <xacro:mecanum_wheel name="fl" x_sign="1"  y_sign="1"/>
+  <xacro:mecanum_wheel name="fr" x_sign="1"  y_sign="-1"/>
+  <xacro:mecanum_wheel name="rl" x_sign="-1" y_sign="1"/>
+  <xacro:mecanum_wheel name="rr" x_sign="-1" y_sign="-1"/>
+
+  <!-- ============================================================ -->
+  <!--  5. 센서 링크                                                 -->
+  <!-- ============================================================ -->
+
+  <!-- LiDAR (RPLIDAR A2M12) — base_link 고정 (전용 구조물, 리프트와 분리) -->
+  <link name="lidar_link">
+    <visual>
+      <geometry><cylinder radius="0.035" length="0.04"/></geometry>
+      <material name="sensor_color"/>
+    </visual>
+    <collision>
+      <geometry><cylinder radius="0.035" length="0.04"/></geometry>
+    </collision>
+    <inertial>
+      <mass value="0.1"/>
+      <inertia ixx="0.0001" iyy="0.0001" izz="0.0001" ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+  </link>
+  <joint name="lidar_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="lidar_link"/>
+    <origin xyz="${lidar_x} ${lidar_y} ${lidar_z}" rpy="0 0 ${lidar_yaw}"/>
+  </joint>
+
+  <!-- IMU (BNO055) — base_link 중심 -->
+  <link name="imu_link">
+    <inertial>
+      <mass value="0.01"/>
+      <inertia ixx="1e-6" iyy="1e-6" izz="1e-6" ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+  </link>
+  <joint name="imu_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="imu_link"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+
+  <!-- ★ 리프트 Dynamic TF: camera_mount_joint 를 prismatic 으로 전환 (§3)
+       lift_tf_node 가 /joint_states 로 position[m]을 발행 → RSP가 이 TF를 굴림.
+       원점 z = lift_min_height (접힘 높이), +z로 stroke 만큼 상승. -->
+  <link name="camera_mount_link">
+    <inertial>
+      <mass value="0.01"/>
+      <inertia ixx="1e-6" iyy="1e-6" izz="1e-6" ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+  </link>
+  <joint name="camera_mount_joint" type="prismatic">
+    <parent link="base_link"/>
+    <child link="camera_mount_link"/>
+    <origin xyz="${camera_x} 0 ${lift_min_height}" rpy="0 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="0.0" upper="${lift_stroke}" effort="100.0" velocity="0.1"/>
+  </joint>
+
+  <!-- 카메라 (RealSense D415) — 리프트 상단, 하향 틸트 고정 (§1-3) -->
+  <link name="camera_link">
+    <visual>
+      <geometry><box size="0.02 0.099 0.023"/></geometry>  <!-- D415 대략 치수 -->
+      <material name="sensor_color"/>
+    </visual>
+    <inertial>
+      <mass value="0.072"/>  <!-- D415 72g -->
+      <inertia ixx="1e-6" iyy="1e-6" izz="1e-6" ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+  </link>
+  <joint name="camera_joint" type="fixed">
+    <parent link="camera_mount_link"/>
+    <child link="camera_link"/>
+    <origin xyz="0 0 0" rpy="0 ${camera_tilt} 0"/>  <!-- 하향 틸트 (pitch) -->
+  </joint>
+
+  <!-- 광학 프레임 (z-forward 광학 관례) -->
+  <link name="camera_optical_link"/>
+  <joint name="camera_optical_joint" type="fixed">
+    <parent link="camera_link"/>
+    <child link="camera_optical_link"/>
+    <origin xyz="0 0 0" rpy="-1.5708 0 -1.5708"/>
+  </joint>
+
+  <!-- ============================================================ -->
+  <!--  6. Gazebo 플러그인 (시뮬 전용 — 실물 RSP는 <gazebo> 무시)    -->
+  <!-- ============================================================ -->
+
+  <!-- 6-1. 메카넘 홀로노믹 구동 (planar_move) -->
+  <gazebo>
+    <plugin name="planar_move" filename="libgazebo_ros_planar_move.so">
+      <!-- ★ 7/31 수정
+           command_topic / odometry_topic 태그는 ROS1 전용이라 ROS2 의
+           gazebo_ros_planar_move 가 읽지 않는다. 그래서 로그에
+           "Subscribed to [/cmd_vel]" 이 찍히고 cmd_vel_smoothed 는 무시됐다.
+           ROS2 에서는 ros/remapping 만 유효하므로 cmd_vel 도 여기서 리맵한다.
+
+           체인 (실물과 동일 위상):
+             controller_server  [cmd_vel]
+               to collision_monitor  [cmd_vel_smoothed]
+               to planar_move (시뮬) / serial_bridge (실물)
+
+           teleop 으로 직접 몰 때는 cmd_vel_smoothed 로 발행할 것:
+             ros2 run teleop_twist_keyboard teleop_twist_keyboard
+               ros-args -r cmd_vel:=/cmd_vel_smoothed -p use_sim_time:=true -->
+      <ros>
+        <namespace>/</namespace>
+        <remapping>cmd_vel:=cmd_vel_smoothed</remapping>
+        <remapping>odom:=odom_raw</remapping>
+      </ros>
+      <odometry_frame>odom</odometry_frame>
+      <robot_base_frame>base_footprint</robot_base_frame>
+      <odometry_rate>30.0</odometry_rate>
+      <publish_odom>true</publish_odom>
+      <publish_odom_tf>false</publish_odom_tf>
+    </plugin>
+  </gazebo>
+
+  <!-- 6-2. LiDAR — RPLIDAR A2M12 실제 스펙 반영 (§3) -->
+  <gazebo reference="lidar_link">
+    <sensor type="ray" name="a2m12">
+      <pose>0 0 0 0 0 0</pose>
+      <update_rate>$(arg lidar_rate)</update_rate>
+      <ray>
+        <scan>
+          <horizontal>
+            <!-- ★ 7/31: 1600 → $(arg lidar_samples) 기본 360.
+                 type="ray" 는 GPU가 아니라 물리엔진이 CPU로 레이캐스팅한다.
+                 월드 모델이 늘어날수록 비용이 선형 증가 → RTF 저하의 주원인.
+                 실물 스캔 해상도와는 무관(드라이버가 별도로 발행). -->
+            <samples>$(arg lidar_samples)</samples>
+            <resolution>1</resolution>
+            <min_angle>-3.14159</min_angle>
+            <max_angle>3.14159</max_angle>
+          </horizontal>
+        </scan>
+        <range>
+          <min>0.2</min>                       <!-- A2M12 0.2~12m -->
+          <max>12.0</max>
+          <resolution>0.01</resolution>
+        </range>
+      </ray>
+      <plugin name="a2m12_ros" filename="libgazebo_ros_ray_sensor.so">
+        <ros><remapping>~/out:=scan</remapping></ros>
+        <output_type>sensor_msgs/LaserScan</output_type>
+        <frame_name>lidar_link</frame_name>
+      </plugin>
+    </sensor>
+  </gazebo>
+
+  <!-- 6-3. 카메라 — RealSense D415 (FOV 65°×40° → 1.134rad × 0.698rad)
+       ★ 7/31: camera_enabled 기본 false.
+         llvmpipe에서 뎁스 카메라는 매 프레임 오프스크린 렌더 패스를 추가해
+         GUI FPS를 직접 깎는다(7 FPS의 주원인). 한이음 시연은 2D LiDAR SLAM +
+         Nav2 가 백본이라 카메라 없이도 전 시나리오가 성립한다.
+         camera_link / camera_optical_link 링크와 TF는 항상 살아 있으므로
+         리프트 상승에 따른 카메라 TF 변화 시연에는 지장 없다.
+         켜려면: camera_enabled:=true (필요시 camera_rate/width/height 조정) -->
+  <xacro:if value="$(arg camera_enabled)">
+    <gazebo reference="camera_link">
+      <sensor type="depth" name="d415">
+        <update_rate>$(arg camera_rate)</update_rate>
+        <camera>
+          <horizontal_fov>1.134</horizontal_fov>   <!-- D415 65° -->
+          <image>
+            <width>$(arg camera_width)</width>
+            <height>$(arg camera_height)</height>
+            <format>R8G8B8</format>
+          </image>
+          <clip><near>0.2</near><far>10.0</far></clip>
+        </camera>
+        <plugin name="d415_ros" filename="libgazebo_ros_camera.so">
+          <frame_name>camera_optical_link</frame_name>
+          <min_depth>0.2</min_depth>
+          <max_depth>10.0</max_depth>
+        </plugin>
+      </sensor>
+    </gazebo>
+  </xacro:if>
+
+  <!-- 6-4. IMU (BNO055) -->
+  <gazebo reference="imu_link">
+    <sensor type="imu" name="bno055">
+      <always_on>1</always_on>
+      <update_rate>$(arg imu_rate)</update_rate>
+      <imu/>
+      <plugin name="bno055_ros" filename="libgazebo_ros_imu_sensor.so">
+        <ros><remapping>~/out:=imu/data</remapping></ros>
+        <frame_name>imu_link</frame_name>
+      </plugin>
+    </sensor>
+  </gazebo>
+
+  <!-- 바퀴 마찰 낮게 (planar_move가 미끄러지듯 움직이게) -->
+  <xacro:macro name="wheel_gazebo" params="name">
+    <gazebo reference="wheel_${name}_link">
+      <mu1>0.1</mu1><mu2>0.1</mu2>
+    </gazebo>
+  </xacro:macro>
+  <xacro:wheel_gazebo name="fl"/>
+  <xacro:wheel_gazebo name="fr"/>
+  <xacro:wheel_gazebo name="rl"/>
+  <xacro:wheel_gazebo name="rr"/>
+
+</robot>

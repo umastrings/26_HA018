@@ -1,0 +1,108 @@
+# slam_real.yaml — 실차 slam_toolbox 설정
+#
+#   slam_hospital_4bed.yaml(시뮬 케어시설 월드 전용, 8m 직선 복도 특성에 맞춘 값)을
+#   그대로 재사용하지 않고 분리했다. 실차 환경(방/복도 실측 형상 미상, 실측 완료 전)은
+#   그 튜닝 근거가 성립하지 않는다 — 아래 [TODO] 표시된 값은 실측 전 slam_toolbox
+#   기본값에 가까운 보수적인 값으로 채웠다. 실차로 맵을 몇 번 더 만들어보고 갱신할 것.
+#
+#   ★ online_async_launch.py 는 base_frame 을 launch 인자로 받지 않는다.
+#     반드시 이 파일처럼 slam_params_file 로 넘겨야 base_footprint 가 적용된다.
+#     (실물 SLAM 성공 레시피 0817/0829 기록: base_frame 안 맞으면
+#      "Failed to compute odom pose"류 TF 에러로 매핑이 아예 안 됨)
+#
+#   실행:
+#     ros2 launch smart_upcare_control slam_real.launch.py
+#   또는 직접:
+#     ros2 launch slam_toolbox online_async_launch.py use_sim_time:=false \
+#       slam_params_file:=<이 파일 경로>
+#
+#   전제 (0829 인계 문서 §1 그대로):
+#     - UNO 살아있어야 함 (robot_bringup.launch.py 로 먼저 브링업)
+#     - ekf_real.yaml 의 vyaw 융합(odom0_config index 11 = true, 0829 반영 완료)
+#       없이 돌리면 회전각이 안 잡혀 맵이 부채꼴로 겹친다 (0817·0829 실차 확인).
+#
+#   실차 vs 시뮬 차이 요점만 적으면:
+#     - use_sim_time: false (고정, 이 파일 전용)
+#     - 루프 클로저 탐색 반경: 케어시설 8m 복도 전제(4.0)를 걷어내고 기본값 근처로
+#       완화. 실제 방 형상을 모르는 채로 넓게 잡으면 오탐 루프클로저 위험이 더 크다.
+#     - map_update_interval: VM 부하절감 사유(2.0)가 실차엔 해당 없음. 기본값(5.0
+#       근처)으로 되돌리되, teleop 중 실시간 피드백이 아쉬우면 낮출 것 — TODO.
+
+slam_toolbox:
+  ros__parameters:
+
+    # ── 플러그인 ──
+    solver_plugin: solver_plugins::CeresSolver
+    ceres_linear_solver: SPARSE_NORMAL_CHOLESKY
+    ceres_preconditioner: SCHUR_JACOBI
+    ceres_trust_strategy: LEVENBERG_MARQUARDT
+    ceres_dogleg_type: TRADITIONAL_DOGLEG
+    ceres_loss_function: None
+
+    # ── 프레임 / 토픽 ──
+    odom_frame: odom
+    map_frame: map
+    base_frame: base_footprint     # URDF가 base_footprint 사용. base_link로 두면 TF 어긋남
+    scan_topic: /scan
+    use_map_saver: true
+    mode: mapping
+
+    # ── 발행 주기 ──
+    debug_logging: false
+    throttle_scans: 1
+    transform_publish_period: 0.02
+    # [TODO-실측] map_update_interval — 시뮬(2.0)은 VM 부하절감이 이유였다.
+    #   젯슨 실물은 그 제약이 없으므로 slam_toolbox 기본값(5.0)에서 시작.
+    #   teleop 중 지도가 너무 늦게 그려져 불편하면 낮출 것.
+    map_update_interval: 5.0
+    resolution: 0.05               # Nav2 costmap resolution과 동일하게 맞춤
+    max_laser_range: 12.0          # A2M12 스펙 12m (명세서 §2.5)
+    # [TODO-실측] minimum_time_interval — 시뮬값 0.2는 "LiDAR 5Hz"(VM 부하 제한)
+    #   전제였다. 실물 A2M12는 스캔 주파수 ~10Hz(5~15Hz 가변, 명세서 §2.5).
+    #   0.1로 낮춰 시작하되, CPU 부하가 크면(rosbag/htop으로 확인) 올릴 것.
+    minimum_time_interval: 0.1
+    transform_timeout: 0.2
+    tf_buffer_duration: 30.0
+    stack_size_to_use: 40000000
+
+    # ── 스캔 처리 트리거 ──
+    use_scan_matching: true
+    use_scan_barycenter: true
+    minimum_travel_distance: 0.2
+    minimum_travel_heading: 0.2
+    scan_buffer_size: 10
+    scan_buffer_maximum_scan_distance: 12.0
+    link_match_minimum_response_fine: 0.1
+    link_scan_maximum_distance: 1.5
+
+    # ── 루프 클로저 ──
+    # [TODO-실측] 시뮬값(loop_search_maximum_distance 4.0 등)은 "8m 직선 복도 +
+    #   알코브 요철" 전제로 크게 잡은 것. 실차 매핑 공간(방/복도) 형상을 아직
+    #   모르므로 slam_toolbox 기본값 근처로 되돌린다. 넓은 공간에서 루프클로저가
+    #   안 걸리면 이 값을 늘리고, 좁은 공간에서 오탐(엉뚱한 지점을 같은 곳으로
+    #   착각)이 보이면 더 줄일 것.
+    do_loop_closing: true
+    loop_search_maximum_distance: 3.0
+    loop_match_minimum_chain_size: 10
+    loop_match_maximum_variance_coarse: 3.0
+    loop_match_minimum_response_coarse: 0.35
+    loop_match_minimum_response_fine: 0.45
+
+    # ── 상관 기반 스캔 매칭 ──
+    correlation_search_space_dimension: 0.5
+    correlation_search_space_resolution: 0.01
+    correlation_search_space_smear_deviation: 0.1
+
+    loop_search_space_dimension: 8.0
+    loop_search_space_resolution: 0.05
+    loop_search_space_smear_deviation: 0.03
+
+    # ── 스캔 매처 페널티 ──
+    distance_variance_penalty: 0.5
+    angle_variance_penalty: 1.0
+    fine_search_angle_offset: 0.00349
+    coarse_search_angle_offset: 0.349
+    coarse_angle_resolution: 0.0349
+    minimum_angle_penalty: 0.9
+    minimum_distance_penalty: 0.5
+    use_response_expansion: true

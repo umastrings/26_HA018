@@ -13,11 +13,13 @@ slam_real.launch.py — 실차 SLAM (slam_toolbox, 실물 UNO+라이다 기준)
   전제 (0829 인계 문서 §2 그대로):
     1) robot_bringup.launch.py 가 먼저 떠 있어야 함 (라이다+브리지+EKF+TF)
          ros2 launch smart_upcare_control robot_bringup.launch.py \
-             uno_port:=/dev/ttyCH341USB0 enable_esp1:=false use_virtual_lift:=true
-       → "UNO 25Hz" 로그 확인. (카메라 "No RealSense" 에러는 무시)
-    2) ekf_real.yaml 의 vyaw 융합(odom0_config index 11 = true, 0829 반영)이
-       없으면 회전각이 안 잡혀 맵이 부채꼴로 겹친다. IMU(ESP32 #1) 장착 전까지는
-       필수.
+             uno_port:=/dev/ttyCH341USB0 use_virtual_lift:=true
+       → "UNO 25Hz" + "ESP1 IMU ~50Hz" 로그 둘 다 확인. "IMU 수신 끊김" ERROR 가
+         뜨면 매핑하지 말 것. (카메라 "No RealSense" 에러는 무시)
+    2) ★ 10/4 갱신 — 회전(yaw)은 IMU 전담이다. ekf_real.yaml 은 9/5 에 휠 vyaw
+       (odom0_config index 11)를 false 로 원복했으므로, IMU 없이(enable_esp1:=false)
+       돌리면 EKF 에 회전 정보가 0 이 되어 맵이 부채꼴로 겹친다.
+       (0829 의 enable_esp1:=false + 휠 vyaw=true 조합은 IMU 장착 전 임시 절차였음)
 
   실행:
     ros2 launch smart_upcare_control slam_real.launch.py

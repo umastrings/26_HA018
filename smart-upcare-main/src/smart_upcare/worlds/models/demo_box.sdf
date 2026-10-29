@@ -1,0 +1,32 @@
+<?xml version="1.0" ?>
+<!--
+  demo_box.sdf — Nav2 회피/재계획 시연용 단순 박스 장애물
+  0.40 x 0.40 x 0.60 m. LiDAR 스캔 평면(z=0.175 m)보다 충분히 높음.
+  static=true : 로봇이 밀고 지나가지 않도록 고정. Gazebo GUI 에서는 여전히 드래그 이동 가능.
+
+  스폰:
+    ros2 run gazebo_ros spawn_entity.py \
+      -file $(ros2 pkg prefix smart_upcare)/share/smart_upcare/worlds/models/demo_box.sdf \
+      -entity demo_box -x 11.5 -y 0.0 -z 0.0
+  제거:
+    ros2 service call /delete_entity gazebo_msgs/srv/DeleteEntity "{name: 'demo_box'}"
+-->
+<sdf version="1.6">
+  <model name="demo_box">
+    <static>true</static>
+    <link name="link">
+      <pose>0 0 0.30 0 0 0</pose>
+      <collision name="collision">
+        <geometry><box><size>0.40 0.40 0.60</size></box></geometry>
+      </collision>
+      <visual name="visual">
+        <geometry><box><size>0.40 0.40 0.60</size></box></geometry>
+        <material>
+          <ambient>0.55 0.30 0.10 1</ambient>
+          <diffuse>0.85 0.50 0.18 1</diffuse>
+          <specular>0.05 0.05 0.05 1</specular>
+        </material>
+      </visual>
+    </link>
+  </model>
+</sdf>

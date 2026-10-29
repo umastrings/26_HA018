@@ -34,6 +34,7 @@ def generate_launch_description():
     enable_esp2 = LaunchConfiguration('enable_esp2')
     track_width = LaunchConfiguration('track_width')
     wheelbase = LaunchConfiguration('wheelbase')
+    bwd_gain = LaunchConfiguration('bwd_gain')
     uno_port = LaunchConfiguration('uno_port')
     esp1_port = LaunchConfiguration('esp1_port')
     esp2_port = LaunchConfiguration('esp2_port')
@@ -48,8 +49,18 @@ def generate_launch_description():
                               description='false 면 IMU/lift 없이 UNO만 (캘리브레이션용)'),
         DeclareLaunchArgument('enable_esp2', default_value='false',
                               description='ESP32 2대 확보 시 true (§6)'),
-        DeclareLaunchArgument('track_width', default_value='0.1354'),  # 9/1 재보정 (odom 회전각 실측)
+        # ★ 9/5 — 이 launch 인자 기본값이 소스 기본값을 항상 덮어써서 track_width 수정이
+        #   반영 안 되는 버그의 실제 원인이었다 (CLAUDE.md 참조). 0.20699는 URDF 실측치일
+        #   뿐, 90도 회전 odom 재보정 결과인 0.1354와 달라 여기 값만 고쳐도 되돌아간다.
+        DeclareLaunchArgument('track_width', default_value='0.1354'),
+
         DeclareLaunchArgument('wheelbase', default_value='0.19205'),    # STEP 실측 7/29
+        # ★ 10/4 추가 — 직진 비대칭 보정값. track_width 때 겪은 "launch 기본값이
+        #   소스 기본값을 덮어쓰는" 사고를 반복하지 않으려고 노드 기본값과 항상
+        #   똑같이 맞춰둘 것. 같은 날 1m 전진/후진 반복 측정으로 1.25->1.0625
+        #   재튜닝 확정 (CLAUDE.md §10/4 bwd_gain 재튜닝 참조). 재주행 튜닝은
+        #   재시작 없이 `ros2 param set /serial_bridge_node bwd_gain <값>`으로.
+        DeclareLaunchArgument('bwd_gain', default_value='1.0625'),
         # ─── ★ 8/7 추가: 포트를 전부 launch 인자로 노출 ───
         #   [배경] 기존 기본값이 lidar_port == esp1_port == /dev/ttyUSB0 로 충돌해
         #     robot_bringup 이 둘을 동시에 올리면 나중 쪽이 포트를 못 열었다.
@@ -60,7 +71,10 @@ def generate_launch_description():
         #           lidar_port:=/dev/serial/by-id/usb-...-if00-port0
         # ★ 8/7 구동팀 회신 §6-1: 실차 UNO 는 CH340 클론 → ttyCH341USB0
         DeclareLaunchArgument('uno_port', default_value='/dev/ttyCH341USB0'),
-        DeclareLaunchArgument('esp1_port', default_value='/dev/ttyUSB1'),
+        # ★ 10/4 — 실차 ESP1(ESP32-S3)은 ttyACM0 (9/5 실측). 기존 ttyUSB1 기본값 때문에
+        #   인자를 빼먹으면 ESP1 을 못 열고 IMU 없이 돌았다. 이제 기본값으로 맞고,
+        #   그래도 못 열면 브리지가 기동 실패한다(IMU 없이 띄우려면 enable_esp1:=false).
+        DeclareLaunchArgument('esp1_port', default_value='/dev/ttyACM0'),
         DeclareLaunchArgument('esp2_port', default_value='/dev/ttyUSB2'),
         DeclareLaunchArgument('lidar_port', default_value='/dev/ttyUSB0'),
     ]
@@ -75,6 +89,7 @@ def generate_launch_description():
     esp2_bool = ParameterValue(enable_esp2, value_type=bool)
     track_width_f = ParameterValue(track_width, value_type=float)
     wheelbase_f = ParameterValue(wheelbase, value_type=float)
+    bwd_gain_f = ParameterValue(bwd_gain, value_type=float)
 
     # ── URDF (실측 인자 주입 — IK/EKF와 동일 소스) ──
     robot_description = ParameterValue(
@@ -108,6 +123,7 @@ def generate_launch_description():
             'enable_esp2': esp2_bool,
             'track_width': track_width_f,
             'wheelbase': wheelbase_f,
+            'bwd_gain': bwd_gain_f,
             'uno_port': uno_port,
             'esp1_port': esp1_port,
             'esp2_port': esp2_port,

@@ -1,0 +1,42 @@
+### laser_filter.yaml — LiDAR 자기 몸체 각도 마스킹 (laser_filters)
+###
+### 용도: A2M12 스캔에서 로봇 자기 구조물(마운트 기둥/케이블 등)이 잡히는 각도를
+###       NaN 처리해 SLAM/AMCL/costmap 오탐을 막음.
+###
+### ★ 7/27 마운트 결정의 영향 (§1-2):
+###   라이다를 "전용 고정 구조물"로 섀시 위로 띄워 360° 무차폐가 목표.
+###   → 이론상 자기 몸체 마스킹이 거의 불필요할 수 있음.
+###   실제 필요 여부는 조립 후 `/scan`을 RViz2로 보고 판단(§2-2).
+###
+### ★ TODO (마운트 높이/단면 확정 후 §1-2):
+###   STEP 단면으로 기둥·케이블이 스캔면을 가리는 각도 구간을 실측해
+###   아래 lower_angle/upper_angle 에 채운다. 현재는 "마스킹 없음"에 가까운
+###   플레이스홀더(아주 좁은 후방 구간)로 둠 → 오작동 없이 빌드/기동 가능.
+###
+### 배선 (마운트 확정 후 launch에서):
+###   laser_filters scan_to_scan_filter_chain 노드
+###     input : /scan          (rplidar 원본)
+###     output: /scan_filtered  → slam_toolbox/Nav2/collision_monitor 가 이걸 구독
+###   ※ 지금은 다운스트림이 /scan 직접 구독 → 이 필터는 마운트 확정 전까지 미배선.
+
+scan_to_scan_filter_chain:
+  ros__parameters:
+    filter1:
+      name: self_body_mask
+      type: laser_filters/LaserScanAngularBoundsFilterInPlace
+      params:
+        # [lower_angle, upper_angle] 구간을 제거(NaN). 라디안, lidar_link 기준.
+        # TODO: 실측값으로 교체. 아래는 후방 극소 구간(사실상 no-op) 플레이스홀더.
+        lower_angle: 3.13     # ≈ +179.3°
+        upper_angle: 3.14159  # = +180°
+
+    # (선택) 근접 노이즈 컷 — A2M12 최소거리 0.2m 미만 반사 제거
+    filter2:
+      name: range_min_cut
+      type: laser_filters/LaserScanRangeFilter
+      params:
+        use_message_range_limits: false
+        lower_threshold: 0.2      # A2M12 min range
+        upper_threshold: 12.0     # A2M12 max range
+        lower_replacement_value: .inf
+        upper_replacement_value: .inf

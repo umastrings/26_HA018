@@ -1,0 +1,125 @@
+<?xml version="1.0" ?>
+<!--
+  demo_wheelchair.sdf — Nav2 회피/재계획 시연용 휠체어 장애물 (primitive only)
+  box + cylinder 조합, mesh/텍스처 없음. 전체 외곽 약 0.68(x) x 0.60(y) x 0.95(z).
+  각 visual 은 동일 크기 collision 과 1:1 대응.
+
+  ★ LiDAR 가시성 주의
+    스캔 평면 z=0.175 m 에서 실제로 검출되는 것은 대차륜(±0.28 위치, 길이 약 0.52 m)과
+    앞 캐스터 뿐이다. 좌판(z 0.45~0.51)과 등받이(z 0.50~0.95)는 스캔 평면보다 높아
+    2D costmap 에는 기여하지 않는다. costmap 에 확실한 덩어리로 찍히길 원하면
+    demo_box.sdf 를 쓰는 편이 안전하다.
+
+  스폰:
+    ros2 run gazebo_ros spawn_entity.py \
+      -file $(ros2 pkg prefix smart_upcare)/share/smart_upcare/worlds/models/demo_wheelchair.sdf \
+      -entity demo_wheelchair -x 4.0 -y -0.30 -z 0.0 -Y 1.5708
+  제거:
+    ros2 service call /delete_entity gazebo_msgs/srv/DeleteEntity "{name: 'demo_wheelchair'}"
+-->
+<sdf version="1.6">
+  <model name="demo_wheelchair">
+    <static>true</static>
+    <link name="link">
+
+      <!-- 좌판 0.45 x 0.45 x 0.06 -->
+      <collision name="seat_c">
+        <pose>0 0 0.48 0 0 0</pose>
+        <geometry><box><size>0.45 0.45 0.06</size></box></geometry>
+      </collision>
+      <visual name="seat_v">
+        <pose>0 0 0.48 0 0 0</pose>
+        <geometry><box><size>0.45 0.45 0.06</size></box></geometry>
+        <material>
+          <ambient>0.10 0.12 0.16 1</ambient>
+          <diffuse>0.22 0.26 0.32 1</diffuse>
+        </material>
+      </visual>
+
+      <!-- 등받이 0.06 x 0.45 x 0.45 -->
+      <collision name="back_c">
+        <pose>-0.20 0 0.72 0 0 0</pose>
+        <geometry><box><size>0.06 0.45 0.45</size></box></geometry>
+      </collision>
+      <visual name="back_v">
+        <pose>-0.20 0 0.72 0 0 0</pose>
+        <geometry><box><size>0.06 0.45 0.45</size></box></geometry>
+        <material>
+          <ambient>0.10 0.12 0.16 1</ambient>
+          <diffuse>0.22 0.26 0.32 1</diffuse>
+        </material>
+      </visual>
+
+      <!-- 대차륜 좌 (반지름 0.28, 축 Y) -->
+      <collision name="wheel_l_c">
+        <pose>0 0.28 0.28 1.5708 0 0</pose>
+        <geometry><cylinder><radius>0.28</radius><length>0.04</length></cylinder></geometry>
+      </collision>
+      <visual name="wheel_l_v">
+        <pose>0 0.28 0.28 1.5708 0 0</pose>
+        <geometry><cylinder><radius>0.28</radius><length>0.04</length></cylinder></geometry>
+        <material>
+          <ambient>0.05 0.05 0.05 1</ambient>
+          <diffuse>0.15 0.15 0.15 1</diffuse>
+        </material>
+      </visual>
+
+      <!-- 대차륜 우 -->
+      <collision name="wheel_r_c">
+        <pose>0 -0.28 0.28 1.5708 0 0</pose>
+        <geometry><cylinder><radius>0.28</radius><length>0.04</length></cylinder></geometry>
+      </collision>
+      <visual name="wheel_r_v">
+        <pose>0 -0.28 0.28 1.5708 0 0</pose>
+        <geometry><cylinder><radius>0.28</radius><length>0.04</length></cylinder></geometry>
+        <material>
+          <ambient>0.05 0.05 0.05 1</ambient>
+          <diffuse>0.15 0.15 0.15 1</diffuse>
+        </material>
+      </visual>
+
+      <!-- 앞 캐스터 좌 (반지름 0.10 → 스캔 평면 0.175 에 걸림) -->
+      <collision name="caster_l_c">
+        <pose>0.28 0.20 0.10 1.5708 0 0</pose>
+        <geometry><cylinder><radius>0.10</radius><length>0.03</length></cylinder></geometry>
+      </collision>
+      <visual name="caster_l_v">
+        <pose>0.28 0.20 0.10 1.5708 0 0</pose>
+        <geometry><cylinder><radius>0.10</radius><length>0.03</length></cylinder></geometry>
+        <material>
+          <ambient>0.05 0.05 0.05 1</ambient>
+          <diffuse>0.15 0.15 0.15 1</diffuse>
+        </material>
+      </visual>
+
+      <!-- 앞 캐스터 우 -->
+      <collision name="caster_r_c">
+        <pose>0.28 -0.20 0.10 1.5708 0 0</pose>
+        <geometry><cylinder><radius>0.10</radius><length>0.03</length></cylinder></geometry>
+      </collision>
+      <visual name="caster_r_v">
+        <pose>0.28 -0.20 0.10 1.5708 0 0</pose>
+        <geometry><cylinder><radius>0.10</radius><length>0.03</length></cylinder></geometry>
+        <material>
+          <ambient>0.05 0.05 0.05 1</ambient>
+          <diffuse>0.15 0.15 0.15 1</diffuse>
+        </material>
+      </visual>
+
+      <!-- 발판 -->
+      <collision name="footrest_c">
+        <pose>0.32 0 0.20 0 0 0</pose>
+        <geometry><box><size>0.16 0.36 0.04</size></box></geometry>
+      </collision>
+      <visual name="footrest_v">
+        <pose>0.32 0 0.20 0 0 0</pose>
+        <geometry><box><size>0.16 0.36 0.04</size></box></geometry>
+        <material>
+          <ambient>0.30 0.30 0.32 1</ambient>
+          <diffuse>0.55 0.55 0.58 1</diffuse>
+        </material>
+      </visual>
+
+    </link>
+  </model>
+</sdf>

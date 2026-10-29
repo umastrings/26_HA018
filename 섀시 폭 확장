@@ -1,0 +1,222 @@
+#!/usr/bin/env python3
+import rclpy
+from rclpy.node import Node
+from sensor_msgs.msg import LaserScan
+from geometry_msgs.msg import Polygon, Point32
+
+import serial
+import time
+import threading
+from enum import Enum
+
+class ExpansionStep(Enum):
+    NORMAL = 0   # 0.0 mm (완전 수축 / 기본 상태)
+    MID    = 1   # 25.0 mm (중간 확장)
+    MAX    = 2   # 50.0 mm (최대 확장)
+
+class SteppedChassisController(Node):
+    def __init__(self):
+        super().__init__('stepped_chassis_controller')
+
+        # ----------------------------------------------------
+        # 1. 제어 파라미터 및 임계값 설정
+        # ----------------------------------------------------
+        self.ROBOT_LENGTH = 0.8  # 로봇 전장 (m)
+        
+        # 섀시 위치 (mm) & Footprint 폭 (m)
+        self.POS_NORMAL_MM = 0.0    # NORMAL: 완전히 접힌 상태
+        self.POS_MID_MM    = 25.0   # STEP 1: 중간 확장
+        self.POS_MAX_MM    = 50.0   # STEP 2: 최대 확장
+
+        self.WIDTH_NORMAL_M = 0.50
+        self.WIDTH_MID_M    = 0.65
+        self.WIDTH_MAX_M    = 0.80
+
+        # 센서 판단 임계값
+        self.LIFT_MID_THRESH_MM = 250.0   # 중간 확장 시작 높이
+        self.LIFT_MAX_THRESH_MM = 500.0   # 최대 확장 높이 (500mm 이상)
+        self.OBSTACLE_THRESH_M  = 0.40    # 장애물 감지 수축 거리 (0.4m)
+
+        # ----------------------------------------------------
+        # 2. 내부 상태 변수
+        # ----------------------------------------------------
+        self.min_obstacle_dist = 999.0
+        self.lift_height = 0.0
+        
+        self.current_step = ExpansionStep.NORMAL
+        self.target_step = ExpansionStep.NORMAL
+
+        # ----------------------------------------------------
+        # 3. 시리얼 포트 설정
+        # ----------------------------------------------------
+        self.mks_port = '/dev/ttyCH341USB0'
+        self.esp_port = '/dev/ttyUSB0'
+
+        self.mks_ser = self.init_serial(self.mks_port, 115200, "MKS DLC32")
+        self.esp_ser = self.init_serial(self.esp_port, 115200, "ESP32 Lift")
+
+        # 부팅 시 오토 호밍 및 0.0mm ~ 50.0mm 초기화
+        if self.mks_ser:
+            if not self.perform_homing():
+                self.get_logger().error("❌ 영점 맞추기 실패! 노드를 종료합니다.")
+                exit(1)
+
+        # ----------------------------------------------------
+        # 4. ROS 2 토픽 및 스레드 설정
+        # ----------------------------------------------------
+        self.create_subscription(LaserScan, '/scan', self.scan_callback, 10)
+        self.pub_footprint = self.create_publisher(Polygon, '/global_costmap/footprint_raw', 10)
+
+        # ESP32 수신 스레드
+        if self.esp_ser:
+            threading.Thread(target=self.read_esp32_loop, daemon=True).start()
+
+        # 10Hz 제어 루프 (0.1초 마다 실행)
+        self.timer = self.create_timer(0.1, self.control_loop)
+        self.get_logger().info("🚀 단계별 가변 섀시 제어 노드가 가동되었습니다.")
+
+    def init_serial(self, port, baud, name):
+        try:
+            ser = serial.Serial(port, baud, timeout=0.1)
+            self.get_logger().info(f"✅ {name} 연결 성공: {port}")
+            time.sleep(0.5)
+            return ser
+        except Exception as e:
+            self.get_logger().error(f"❌ {name} 연결 실패 ({port}): {e}")
+            return None
+
+    def perform_homing(self):
+        """0.0mm 원점 잡기 및 50.0mm 소프트 리미트 설정"""
+        self.get_logger().info("🏠 [Homing] 섀시 완전 수축(0mm) 영점 조절을 시작합니다...")
+        try:
+            self.mks_ser.write(b"$22=1\n") # 호밍 활성화
+            self.mks_ser.write(b"$20=0\n") # 소프트 리미트 잠시 OFF
+            time.sleep(0.1)
+            self.mks_ser.write(b"$H\n")    # 리미트 스위치 수축 이동
+
+            start_time = time.time()
+            homing_success = False
+
+            while time.time() - start_time < 20.0:
+                self.mks_ser.write(b"?\n")
+                time.sleep(0.2)
+                if self.mks_ser.in_waiting > 0:
+                    res = self.mks_ser.read(self.mks_ser.in_waiting).decode('utf-8', errors='ignore')
+                    if "Idle" in res and "Home" not in res:
+                        homing_success = True
+                        break
+
+            if homing_success:
+                self.get_logger().info("✅ 완전 수축(NORMAL) 영점 좌표(0.0mm) 설정 완료!")
+                self.mks_ser.write(b"G90\n")
+                self.mks_ser.write(b"G92 X0 Y0 Z0\n")
+                self.mks_ser.write(b"$130=50.0\n") # Max Travel 50mm
+                self.mks_ser.write(b"$131=50.0\n")
+                self.mks_ser.write(b"$132=50.0\n")
+                self.mks_ser.write(b"$20=1\n")     # 소프트 리미트 ON
+                
+                self.current_step = ExpansionStep.NORMAL
+                self.publish_footprint(self.WIDTH_NORMAL_M)
+                return True
+            else:
+                return False
+        except Exception as e:
+            self.get_logger().error(f"호밍 중 예외 발생: {e}")
+            return False
+
+    def scan_callback(self, msg):
+        valid_ranges = [r for r in msg.ranges if msg.range_min < r < msg.range_max]
+        if valid_ranges:
+            self.min_obstacle_dist = min(valid_ranges)
+
+    def read_esp32_loop(self):
+        """ESP32 시리얼 통신으로 리프트 높이(0~700mm) 수신"""
+        while rclpy.ok():
+            if self.esp_ser and self.esp_ser.in_waiting > 0:
+                try:
+                    line = self.esp_ser.readline().decode('utf-8', errors='ignore').strip()
+                    if line.startswith("H:"):
+                        self.lift_height = float(line.replace("H:", ""))
+                except Exception:
+                    pass
+            time.sleep(0.02)
+
+    def control_loop(self):
+        """알고리즘 1 & 2 통합 판단 루프"""
+        
+        # [알고리즘 2] 장애물 감지 시 최우선 축소 (0.0mm)
+        if self.min_obstacle_dist < self.OBSTACLE_THRESH_M:
+            self.target_step = ExpansionStep.NORMAL
+            
+        # [알고리즘 1] 장애물이 없을 때 리프트 높이(0~700mm)에 따른 단계별 확장
+        else:
+            if self.lift_height >= self.LIFT_MAX_THRESH_MM:
+                # 500mm 이상 상승 시 완전히 펼침
+                self.target_step = ExpansionStep.MAX
+            elif self.lift_height >= self.LIFT_MID_THRESH_MM:
+                # 250mm ~ 500mm 구간 중간 확장
+                self.target_step = ExpansionStep.MID
+            else:
+                # 250mm 미만은 NORMAL(완전 접힘) 유지
+                self.target_step = ExpansionStep.NORMAL
+
+        # 단계(Step)가 변경되었을 때만 1회 제어 명령 발행
+        if self.target_step != self.current_step:
+            self.execute_step_change(self.target_step)
+
+    def execute_step_change(self, step: ExpansionStep):
+        if not self.mks_ser:
+            return
+
+        target_pos_mm = self.POS_NORMAL_MM
+        footprint_width = self.WIDTH_NORMAL_M
+
+        if step == ExpansionStep.NORMAL:
+            target_pos_mm = self.POS_NORMAL_MM
+            footprint_width = self.WIDTH_NORMAL_M
+        elif step == ExpansionStep.MID:
+            target_pos_mm = self.POS_MID_MM
+            footprint_width = self.WIDTH_MID_M
+        elif step == ExpansionStep.MAX:
+            target_pos_mm = self.POS_MAX_MM
+            footprint_width = self.WIDTH_MAX_M
+
+        # G-code 절대 좌표 이동 전송
+        gcode = f"G1 X{target_pos_mm:.1f} Y{target_pos_mm:.1f} Z{target_pos_mm:.1f} F600\n"
+        self.mks_ser.write(gcode.encode('utf-8'))
+        
+        self.get_logger().info(
+            f"🔄 [섀시 가변] {self.current_step.name} -> {step.name} "
+            f"| 위치: {target_pos_mm}mm | 리프트: {self.lift_height:.1f}mm | 장애물: {self.min_obstacle_dist:.2f}m"
+        )
+        self.current_step = step
+
+        # Nav2 Dynamic Footprint 업데이트
+        self.publish_footprint(footprint_width)
+
+    def publish_footprint(self, width: float):
+        polygon = Polygon()
+        half_l = self.ROBOT_LENGTH / 2.0
+        half_w = width / 2.0
+
+        p1 = Point32(x=half_l, y=half_w, z=0.0)
+        p2 = Point32(x=half_l, y=-half_w, z=0.0)
+        p3 = Point32(x=-half_l, y=-half_w, z=0.0)
+        p4 = Point32(x=-half_l, y=half_w, z=0.0)
+
+        polygon.points = [p1, p2, p3, p4]
+        self.pub_footprint.publish(polygon)
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = SteppedChassisController()
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+
+if __name__ == '__main__':
+    main()

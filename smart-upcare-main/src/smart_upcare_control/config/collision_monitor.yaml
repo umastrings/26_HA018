@@ -1,0 +1,86 @@
+### collision_monitor.yaml — Nav2 Collision Monitor
+###
+### 체인:
+###   controller_server [cmd_vel] -> collision_monitor [cmd_vel_smoothed]
+###     -> planar_move(시뮬) / serial_bridge(실물)
+###
+###   - slowdown : 폴리곤 안에 장애물 → 속도 0.3배로 감속
+###   - stop     : 폴리곤 안에 장애물 → 완전 정지
+###
+### ─────────────────────────────────────────────────────────────────
+### ★ 8/3 수정 1 — points 형식
+###   이 Nav2 버전은 points 를 double_array 로 선언한다. 기존의 문자열
+###   "[[0.75, 0.73], ...]" 를 주면 lifecycle configure 단계에서
+###     "is of type {double_array}, setting it to {string} is not allowed"
+###   로 실패하고 lifecycle_manager 가 bringup 을 중단한다.
+###   → [x1, y1, x2, y2, ...] 평평한 숫자 배열로 변경.
+###
+### ★ 8/3 수정 2 — 폴리곤 크기 (중요)
+###   기존값은 hospital_4bed 복도(폭 1.2 m)에 물리적으로 들어가지 않았다.
+###     복도 중앙 기준 벽까지 거리      = 0.60 m
+###     기존 PolygonSlow 반폭          = 0.73 m  → 항상 양쪽 벽을 물음
+###     기존 PolygonStop 반폭          = 0.53 m  → 7 cm 만 치우쳐도 비상정지
+###   결과: 복도 전 구간 0.3배속(0.09 m/s) + 수시 정지.
+###
+###   → 좌우(y)는 벽을 피하도록 줄이고, 부족한 안전거리는 진행 방향(x)으로
+###     확보하는 전방 편향 폴리곤으로 변경.
+###
+###     PolygonStop  y ±0.35  → 벽까지 여유 0.25 m
+###     PolygonSlow  y ±0.40  → 벽까지 여유 0.20 m
+###
+###   ⚠️ 트레이드오프: 원래 설계 의도는 홀로노믹이므로 전방향 대칭이었다.
+###     지금은 횡이동 중 측면 감시가 약해진다. 침상 옆 횡이동 구간에서
+###     측면 안전이 필요하면 y 를 키우되, 그만큼 복도에서 감속이 걸린다.
+###     복도 폭 1.2 m 와 로봇 폭 0.451 m 로는 이 둘을 동시에 만족할 수 없다.
+### ─────────────────────────────────────────────────────────────────
+###
+### ★ 8/4 재조정 — 복도에서 상시 감속이 걸려 progress_checker 가 목표를 중단시킴
+###   로그: "Robot to slowdown for 30.000000 percents due to PolygonSlow polygon"
+###        -> 0.3 배속(0.09 m/s) -> 10초에 0.5m 미달 -> bt_navigator "Goal failed"
+###   복도 반폭 0.60 m 기준 여유 재계산:
+###     PolygonSlow y ±0.40 -> ±0.32 (여유 0.28 m, 중앙 이탈 28cm 까지 허용)
+###     PolygonStop y ±0.35 -> ±0.28 (여유 0.32 m)
+###     slowdown_ratio 0.3 -> 0.5   (걸려도 0.15 m/s 는 유지)
+###
+### ⚠️ inflation_radius(nav2_care.yaml, 0.34) 와 stop 폴리곤 거리를 비슷하게 유지할 것.
+collision_monitor:
+  ros__parameters:
+    use_sim_time: False   # ★ 8/4 launch 에서 bool 로 덮어씀
+    base_frame_id: "base_footprint"
+    odom_frame_id: "odom"
+    cmd_vel_in_topic: "cmd_vel"            # 컨트롤러 출력
+    cmd_vel_out_topic: "cmd_vel_smoothed"  # planar_move / serial_bridge 구독
+    state_topic: "collision_monitor_state"
+    transform_tolerance: 0.2
+    source_timeout: 1.0
+    base_shift_correction: True
+    stop_pub_timeout: 2.0
+
+    polygons: ["PolygonSlow", "PolygonStop"]
+
+    # 감속 링 — 전방 0.80 / 후방 0.45 / 좌우 0.40
+    #   [x1, y1, x2, y2, x3, y3, x4, y4]  (base_footprint 기준, 반시계)
+    PolygonSlow:
+      type: "polygon"
+      points: [0.70, 0.32, 0.70, -0.32, -0.40, -0.32, -0.40, 0.32]
+      action_type: "slowdown"
+      slowdown_ratio: 0.5
+      min_points: 4
+      visualize: True
+      polygon_pub_topic: "polygon_slowdown"
+
+    # 정지 링 — 전방 0.55 / 후방 0.35 / 좌우 0.35
+    PolygonStop:
+      type: "polygon"
+      points: [0.50, 0.28, 0.50, -0.28, -0.32, -0.28, -0.32, 0.28]
+      action_type: "stop"
+      min_points: 4
+      visualize: True
+      polygon_pub_topic: "polygon_stop"
+
+    observation_sources: ["scan"]
+    scan:
+      type: "scan"
+      topic: "/scan"                       # RPLIDAR A2M12
+      enabled: True
+      # min_height / max_height 는 pointcloud 소스 전용이라 scan 에서는 제거

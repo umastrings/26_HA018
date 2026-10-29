@@ -1,0 +1,45 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>smart_upcare_control</name>
+  <version>0.0.0</version>
+  <description>TODO: Package description</description>
+  <maintainer email="yeongin@todo.todo">yeongin</maintainer>
+  <license>TODO: License declaration</license>
+
+  <depend>rclpy</depend>
+  <depend>geometry_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>std_msgs</depend>
+  <depend>nav2_msgs</depend>
+
+  <!-- 파이썬 런타임 의존 -->
+  <!-- ★ 8/7 추가: serial_bridge_node 의 `import serial`.
+       빠져 있어서 깨끗한 젯슨에서 rosdep 통과 후에도 ModuleNotFoundError 발생. -->
+  <exec_depend>python3-pyserial</exec_depend>
+
+  <!-- 실행 의존 (launch가 불러오는 패키지) -->
+  <exec_depend>robot_state_publisher</exec_depend>
+  <exec_depend>robot_localization</exec_depend>
+  <exec_depend>xacro</exec_depend>
+  <exec_depend>nav2_bringup</exec_depend>
+  <exec_depend>nav2_collision_monitor</exec_depend>
+  <exec_depend>nav2_lifecycle_manager</exec_depend>
+  <exec_depend>slam_toolbox</exec_depend>
+  <exec_depend>rplidar_ros</exec_depend>
+  <exec_depend>realsense2_camera</exec_depend>
+  <exec_depend>depthimage_to_laserscan</exec_depend>
+  <!-- ★ 8/7 추가 -->
+  <exec_depend>laser_filters</exec_depend>   <!-- config/laser_filter.yaml -->
+  <exec_depend>topic_tools</exec_depend>     <!-- navigation.launch.py 의 relay 우회 -->
+
+  <test_depend>ament_copyright</test_depend>
+  <test_depend>ament_flake8</test_depend>
+  <test_depend>ament_pep257</test_depend>
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

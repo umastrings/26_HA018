@@ -1,0 +1,85 @@
+# slam_hospital_4bed.yaml — hospital_4bed.world 전용 slam_toolbox 설정
+#
+#   ★ online_async_launch.py 는 base_frame 을 launch 인자로 받지 않는다.
+#     반드시 이 파일처럼 slam_params_file 로 넘겨야 base_footprint 가 적용된다.
+#
+#   실행:
+#     ros2 launch smart_upcare_control slam_4bed.launch.py
+#   또는 직접:
+#     ros2 launch slam_toolbox online_async_launch.py use_sim_time:=true \
+#       slam_params_file:=<이 파일 경로>
+#
+#   이 월드 특성에 맞춘 부분은 [★] 표시.
+
+slam_toolbox:
+  ros__parameters:
+
+    # ── 플러그인 ──
+    solver_plugin: solver_plugins::CeresSolver
+    ceres_linear_solver: SPARSE_NORMAL_CHOLESKY
+    ceres_preconditioner: SCHUR_JACOBI
+    ceres_trust_strategy: LEVENBERG_MARQUARDT
+    ceres_dogleg_type: TRADITIONAL_DOGLEG
+    ceres_loss_function: None
+
+    # ── 프레임 / 토픽 ──
+    odom_frame: odom
+    map_frame: map
+    base_frame: base_footprint     # [★] URDF 가 base_footprint 를 쓴다. base_link 로 두면 TF 가 어긋남
+    scan_topic: /scan
+    use_map_saver: true
+    mode: mapping
+
+    # ── 발행 주기 ──
+    debug_logging: false
+    throttle_scans: 1
+    transform_publish_period: 0.02
+    map_update_interval: 2.0       # [★] VM 부하 절감. 기본 5.0 보다 자주 그려서 운전 중 피드백을 빠르게
+    resolution: 0.05               # Nav2 costmap resolution 과 동일하게 맞춤
+    max_laser_range: 12.0          # [★] A2M12 스펙 12 m
+    minimum_time_interval: 0.2     # [★] LiDAR 5 Hz(0.2s)와 일치. 이보다 작게 두면 중복 처리로 낭비
+    transform_timeout: 0.2
+    tf_buffer_duration: 30.0
+    stack_size_to_use: 40000000
+
+    # ── 스캔 처리 트리거 ──
+    # [★] 8 m 직선 복도에서 너무 촘촘히 노드를 만들면 누적 오차가 커진다.
+    #     20 cm / 0.2 rad 마다 한 번씩만 처리.
+    use_scan_matching: true
+    use_scan_barycenter: true
+    minimum_travel_distance: 0.2
+    minimum_travel_heading: 0.2
+    scan_buffer_size: 10
+    scan_buffer_maximum_scan_distance: 12.0
+    link_match_minimum_response_fine: 0.1
+    link_scan_maximum_distance: 1.5
+
+    # ── 루프 클로저 ──
+    # [★] 이 월드의 핵심. 8 m 평행 복도는 X 방향 위치 모호성이 커서
+    #     복도 중간의 알코브(x 3.6~4.4) / 리세스(x 5.6~6.4) 요철이
+    #     유일한 단서다. 탐색 반경을 넉넉히 준다.
+    do_loop_closing: true
+    loop_search_maximum_distance: 4.0
+    loop_match_minimum_chain_size: 8
+    loop_match_maximum_variance_coarse: 3.0
+    loop_match_minimum_response_coarse: 0.35
+    loop_match_minimum_response_fine: 0.45
+
+    # ── 상관 기반 스캔 매칭 ──
+    correlation_search_space_dimension: 0.5
+    correlation_search_space_resolution: 0.01
+    correlation_search_space_smear_deviation: 0.1
+
+    loop_search_space_dimension: 8.0
+    loop_search_space_resolution: 0.05
+    loop_search_space_smear_deviation: 0.03
+
+    # ── 스캔 매처 페널티 ──
+    distance_variance_penalty: 0.5
+    angle_variance_penalty: 1.0
+    fine_search_angle_offset: 0.00349
+    coarse_search_angle_offset: 0.349
+    coarse_angle_resolution: 0.0349
+    minimum_angle_penalty: 0.9
+    minimum_distance_penalty: 0.5
+    use_response_expansion: true
